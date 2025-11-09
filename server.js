@@ -1,22 +1,25 @@
+// ====================================================
+// SYNTRA API (Render)
+// ====================================================
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mysql from 'mysql2/promise';
+import fetch from 'node-fetch'; // только чтобы Render не ругался при билде
+import { isAddress } from 'ethers';
+import { getUserProtocols, getUserTokens } from './services/debankClient.js';
 
 dotenv.config();
 const app = express();
 
-// ================================
-// 🔹 CORS — только твой фронт
-// ================================
-const allowedOrigins = [
-  'https://syntra-frontend.onrender.com',   // Render frontend
-];
+// ====================================================
+// 🔹 1. CORS
+// ====================================================
+const allowedOrigins = ['https://syntra-frontend.onrender.com'];
 
 app.use(cors({
   origin: function (origin, callback) {
-    // разрешаем запросы без Origin (например из Postman)
-    if (!origin) return callback(null, true);
+    if (!origin) return callback(null, true); // разрешаем Postman и curl
     if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error(`CORS blocked: ${origin}`));
   },
@@ -26,22 +29,22 @@ app.use(cors({
 
 app.use(express.json());
 
-// ================================
-// 🔹 Подключение к MySQL (Hostinger)
-// ================================
+// ====================================================
+// 🔹 2. Подключение к базе (Hostinger MySQL)
+// ====================================================
 const pool = mysql.createPool({
-  host: process.env.DB_HOST,          // auth-db507.hstgr.io
-  user: process.env.DB_USER,          // u363192258_syntra_user
-  password: process.env.DB_PASS,      // SyntraDB12345
-  database: process.env.DB_NAME,      // u363192258_syntra_db
+  host: process.env.DB_HOST || 'auth-db507.hstgr.io',
+  user: process.env.DB_USER || 'u363192258_syntra_user',
+  password: process.env.DB_PASS || 'SyntraDB12345',
+  database: process.env.DB_NAME || 'u363192258_syntra_db',
   waitForConnections: true,
   connectionLimit: 5,
   queueLimit: 0,
 });
 
-// ================================
-// 🔹 Проверка состояния API и базы
-// ================================
+// ====================================================
+// 🔹 3. Health-check (проверка API и БД)
+// ====================================================
 app.get('/health', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT 1 AS ok');
@@ -52,9 +55,9 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// ================================
-// 🔹 Главный маршрут
-// ================================
+// ====================================================
+// 🔹 4. Главная страница API
+// ====================================================
 app.get('/', (req, res) => {
   res.json({
     name: 'Syntra API',
@@ -64,18 +67,11 @@ app.get('/', (req, res) => {
   });
 });
 
-// ================================
-// 🔹 Запуск сервера
-// ================================
-const port = process.env.PORT || 4000;
+// ====================================================
+// 🔹 5. /defi/:address — сводка из DeBank с кэшем
+// ====================================================
 
-// ================================
-// 🔹 /defi/:address — сводка из DeBank с кэшем
-// ================================
-import { isAddress } from 'ethers';
-import { getUserProtocols, getUserTokens } from './services/debankClient.js';
-
-/** получить свежую запись из кэша */
+// --- вспомогательные функции ---
 async function getCache(pool, address) {
   const [rows] = await pool.query(
     'SELECT payload, fetched_at FROM protocol_positions_cache WHERE address=? AND source=? ORDER BY fetched_at DESC LIMIT 1',
@@ -84,7 +80,6 @@ async function getCache(pool, address) {
   return rows[0] || null;
 }
 
-/** записать кэш */
 async function setCache(pool, address, payload) {
   await pool.query(
     'INSERT INTO protocol_positions_cache(address, source, payload) VALUES(?,?,?)',
@@ -92,24 +87,23 @@ async function setCache(pool, address, payload) {
   );
 }
 
-/** нормализуем адрес (нижний регистр) */
-function normAddr(addr) {
-  return String(addr).trim().toLowerCase();
+function normalizeAddress(addr) {
+  return String(addr || '').trim().toLowerCase();
 }
 
+// --- основной маршрут ---
 app.get('/defi/:address', async (req, res) => {
-  const addrRaw = req.params.address;
-  const address = normAddr(addrRaw);
+  const address = normalizeAddress(req.params.address);
 
   if (!isAddress(address)) {
     return res.status(400).json({ ok: false, error: 'Invalid EVM address' });
   }
 
-  const ttlMs = 60_000; // 60 секунд кэш
+  const ttlMs = 60_000; // 1 минута кэша
   let cached = null;
 
   try {
-    // 1) если в кэше свежие данные — отдаём их
+    // 1. Проверяем кэш
     cached = await getCache(pool, address);
     if (cached) {
       const isFresh = Date.now() - new Date(cached.fetched_at).getTime() < ttlMs;
@@ -123,19 +117,18 @@ app.get('/defi/:address', async (req, res) => {
       }
     }
 
-    // 2) тянем из DeBank
+    // 2. Тянем из DeBank
     const [protocols, tokens] = await Promise.all([
       getUserProtocols(address, 'all'),
       getUserTokens(address, true)
     ]);
 
-    // 3) простая сводка (потом расширим)
     const summary = { protocols, tokens };
 
-    // 4) пишем в кэш
+    // 3. Сохраняем в кэш
     await setCache(pool, address, summary);
 
-    // 5) ответ
+    // 4. Возвращаем
     res.json({
       ok: true,
       source: 'debank',
@@ -145,7 +138,7 @@ app.get('/defi/:address', async (req, res) => {
   } catch (e) {
     console.error('[DEF I ERROR]', e.message);
 
-    // если DeBank упал, но у нас есть старый кэш — отдадим его
+    // если упал DeBank, но есть кэш — отдаём старый
     if (cached) {
       return res.json({
         ok: true,
@@ -156,12 +149,14 @@ app.get('/defi/:address', async (req, res) => {
       });
     }
 
-    // совсем всё плохо
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-
+// ====================================================
+// 🔹 6. Запуск сервера
+// ====================================================
+const port = process.env.PORT || 4000;
 app.listen(port, () => {
   console.log(`✅ Syntra API running on port ${port}`);
   console.log(`🌐 Allowed origins: ${allowedOrigins.join(', ')}`);
