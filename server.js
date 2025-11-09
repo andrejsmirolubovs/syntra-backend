@@ -6,46 +6,69 @@ import mysql from 'mysql2/promise';
 dotenv.config();
 const app = express();
 
-// ✅ Разрешаем запросы с фронтенда на Hostinger и Render
+// ================================
+// 🔹 CORS — только твой фронт
+// ================================
+const allowedOrigins = [
+  'https://syntra-frontend.onrender.com',   // Render frontend
+];
+
 app.use(cors({
-  origin: [
-    'https://syntra-dev.dayincrypto.com',
-    'https://syntra-frontend.onrender.com',
-    'http://syntra-dev.dayincrypto.com'
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  origin: function (origin, callback) {
+    // разрешаем запросы без Origin (например из Postman)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error(`CORS blocked: ${origin}`));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
   credentials: true,
 }));
 
 app.use(express.json());
 
-// ✅ Подключение к базе данных (если нужно, можно оставить пустым)
+// ================================
+// 🔹 Подключение к MySQL (Hostinger)
+// ================================
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || '',
-  password: process.env.DB_PASS || '',
-  database: process.env.DB_NAME || '',
+  host: process.env.DB_HOST,          // auth-db507.hstgr.io
+  user: process.env.DB_USER,          // u363192258_syntra_user
+  password: process.env.DB_PASS,      // SyntraDB12345
+  database: process.env.DB_NAME,      // u363192258_syntra_db
   waitForConnections: true,
   connectionLimit: 5,
+  queueLimit: 0,
 });
 
-// ✅ Проверка состояния API и базы
+// ================================
+// 🔹 Проверка состояния API и базы
+// ================================
 app.get('/health', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT 1 AS ok');
     res.json({ ok: true, db: rows[0].ok === 1 });
   } catch (e) {
+    console.error('[HEALTH ERROR]', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// ✅ Главный маршрут
+// ================================
+// 🔹 Главный маршрут
+// ================================
 app.get('/', (req, res) => {
-  res.json({ name: 'Syntra API', version: '0.1.0' });
+  res.json({
+    name: 'Syntra API',
+    version: '0.2.0',
+    status: '✅ online',
+    frontend: 'https://syntra-frontend.onrender.com',
+  });
 });
 
-// ✅ Запуск сервера
+// ================================
+// 🔹 Запуск сервера
+// ================================
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
-  console.log(`API running on http://localhost:${port}`);
+  console.log(`✅ Syntra API running on port ${port}`);
+  console.log(`🌐 Allowed origins: ${allowedOrigins.join(', ')}`);
 });
