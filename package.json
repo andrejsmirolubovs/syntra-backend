@@ -1,0 +1,16 @@
+{
+  "name": "syntra-backend",
+  "version": "0.1.0",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.0",
+    "express": "^4.19.2",
+    "mysql2": "^3.10.0"
+  }
+}
