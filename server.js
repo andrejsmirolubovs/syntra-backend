@@ -1,13 +1,12 @@
 // ====================================================
-// SYNTRA API (Render)
+// SYNTRA CORE API v1 (Render)
 // ====================================================
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mysql from 'mysql2/promise';
-import fetch from 'node-fetch'; // только чтобы Render не ругался при билде
+import fetch from 'node-fetch'; // чтобы Render не ругался
 import { isAddress } from 'ethers';
-import { getUserProtocols, getUserTokens } from './services/debankClient.js';
 
 dotenv.config();
 const app = express();
@@ -15,11 +14,14 @@ const app = express();
 // ====================================================
 // 🔹 1. CORS
 // ====================================================
-const allowedOrigins = ['https://syntra-frontend.onrender.com'];
+const allowedOrigins = [
+  'https://syntra-frontend.onrender.com',
+  'https://syntra-dev.dayincrypto.com'
+];
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true); // разрешаем Postman и curl
+    if (!origin) return callback(null, true); // Postman / curl
     if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error(`CORS blocked: ${origin}`));
   },
@@ -39,11 +41,10 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME || 'u363192258_syntra_db',
   waitForConnections: true,
   connectionLimit: 5,
-  queueLimit: 0,
 });
 
 // ====================================================
-// 🔹 3. Health-check (проверка API и БД)
+// 🔹 3. Health-check
 // ====================================================
 app.get('/health', async (req, res) => {
   try {
@@ -56,108 +57,87 @@ app.get('/health', async (req, res) => {
 });
 
 // ====================================================
-// 🔹 4. Главная страница API
+// 🔹 4. Главная
 // ====================================================
 app.get('/', (req, res) => {
   res.json({
     name: 'Syntra API',
-    version: '0.2.0',
+    version: '1.0.0',
     status: '✅ online',
     frontend: 'https://syntra-frontend.onrender.com',
   });
 });
 
 // ====================================================
-// 🔹 5. /defi/:address — сводка из DeBank с кэшем
+// 🔹 5. Portfolio Snapshots (Covalent + CoinGecko)
 // ====================================================
 
-// --- вспомогательные функции ---
-async function getCache(pool, address) {
-  const [rows] = await pool.query(
-    'SELECT payload, fetched_at FROM protocol_positions_cache WHERE address=? AND source=? ORDER BY fetched_at DESC LIMIT 1',
-    [address, 'debank']
-  );
-  return rows[0] || null;
-}
-
-async function setCache(pool, address, payload) {
-  await pool.query(
-    'INSERT INTO protocol_positions_cache(address, source, payload) VALUES(?,?,?)',
-    [address, 'debank', JSON.stringify(payload)]
-  );
-}
-
-function normalizeAddress(addr) {
-  return String(addr || '').trim().toLowerCase();
-}
-
-// --- основной маршрут ---
-app.get('/defi/:address', async (req, res) => {
-  const address = normalizeAddress(req.params.address);
-
-  if (!isAddress(address)) {
-    return res.status(400).json({ ok: false, error: 'Invalid EVM address' });
-  }
-
-  const ttlMs = 60_000; // 1 минута кэша
-  let cached = null;
-
+// POST /api/portfolio/upsert
+app.post('/api/portfolio/upsert', async (req, res) => {
   try {
-    // 1. Проверяем кэш
-    cached = await getCache(pool, address);
-    if (cached) {
-      const isFresh = Date.now() - new Date(cached.fetched_at).getTime() < ttlMs;
-      if (isFresh) {
-        return res.json({
-          ok: true,
-          source: 'cache',
-          cached_at: cached.fetched_at,
-          data: cached.payload
-        });
-      }
-    }
+    const { wallet, total_value_usd, total_debt_usd, health_factor, avg_apy, pnl_percent, raw } = req.body;
+    if (!wallet) return res.status(400).json({ ok: false, error: 'wallet is required' });
 
-    // 2. Тянем из DeBank
-    const [protocols, tokens] = await Promise.all([
-      getUserProtocols(address, 'all'),
-      getUserTokens(address, true)
-    ]);
+    const sql = `
+      INSERT INTO portfolio_snapshots
+        (wallet, total_value_usd, total_debt_usd, health_factor, avg_apy, pnl_percent, raw_json)
+      VALUES (?,?,?,?,?,?,?)
+    `;
+    const params = [
+      wallet.toLowerCase(),
+      Number(total_value_usd || 0),
+      Number(total_debt_usd || 0),
+      Number(health_factor || 0),
+      Number(avg_apy || 0),
+      Number(pnl_percent || 0),
+      raw ? JSON.stringify(raw) : null
+    ];
 
-    const summary = { protocols, tokens };
-
-    // 3. Сохраняем в кэш
-    await setCache(pool, address, summary);
-
-    // 4. Возвращаем
-    res.json({
-      ok: true,
-      source: 'debank',
-      cached_at: new Date().toISOString(),
-      data: summary
-    });
+    await pool.query(sql, params);
+    res.json({ ok: true });
   } catch (e) {
-    console.error('[DEF I ERROR]', e.message);
+    console.error('[UPSERT ERROR]', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
-    // если упал DeBank, но есть кэш — отдаём старый
-    if (cached) {
-      return res.json({
-        ok: true,
-        source: 'stale-cache',
-        cached_at: cached.fetched_at,
-        data: cached.payload,
-        error: e.message
-      });
-    }
+// GET /api/portfolio/latest?wallet=0x...
+app.get('/api/portfolio/latest', async (req, res) => {
+  try {
+    const wallet = (req.query.wallet || '').toLowerCase();
+    if (!isAddress(wallet)) return res.status(400).json({ ok: false, error: 'Invalid wallet' });
 
+    const [rows] = await pool.query(
+      `SELECT * FROM portfolio_snapshots
+       WHERE wallet = ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [wallet]
+    );
+
+    res.json({ ok: true, data: rows[0] || null });
+  } catch (e) {
+    console.error('[LATEST ERROR]', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
 // ====================================================
-// 🔹 6. Запуск сервера
+// 🔹 6. Старый DeBank Endpoint (отключен, чтобы не ломался билд)
+// ====================================================
+app.get('/defi/:address', async (req, res) => {
+  res.json({
+    ok: false,
+    disabled: true,
+    message: 'DeBank integration disabled in Syntra Core v1',
+  });
+});
+
+// ====================================================
+// 🔹 7. Запуск сервера
 // ====================================================
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
-  console.log(`✅ Syntra API running on port ${port}`);
+  console.log(`✅ Syntra API v1 running on port ${port}`);
   console.log(`🌐 Allowed origins: ${allowedOrigins.join(', ')}`);
 });
