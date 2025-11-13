@@ -1,15 +1,16 @@
 // ====================================================
-// SYNTRA CORE API v1 (Render)
+// SYNTRA CORE API v1 (Render + Neon PostgreSQL)
 // ====================================================
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import mysql from 'mysql2/promise';
-import fetch from 'node-fetch'; // чтобы Render не ругался
+import pkg from 'pg';
+import fetch from 'node-fetch';
 import { isAddress } from 'ethers';
 
 dotenv.config();
 const app = express();
+const { Pool } = pkg;
 
 // ====================================================
 // 🔹 1. CORS
@@ -21,7 +22,7 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true); // Postman / curl
+    if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error(`CORS blocked: ${origin}`));
   },
@@ -32,24 +33,27 @@ app.use(cors({
 app.use(express.json());
 
 // ====================================================
-// 🔹 2. Подключение к базе (Hostinger MySQL)
+// 🔹 2. Подключение к базе (Neon PostgreSQL)
 // ====================================================
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'auth-db507.hstgr.io',
-  user: process.env.DB_USER || 'u363192258_syntra_user',
-  password: process.env.DB_PASS || 'SyntraDB12345',
-  database: process.env.DB_NAME || 'u363192258_syntra_db',
-  waitForConnections: true,
-  connectionLimit: 5,
+if (!process.env.DATABASE_URL) {
+  console.error("❌ ERROR: DATABASE_URL not found in environment variables");
+  process.exit(1);
+}
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
 });
+
+console.log("📦 Connected to Neon PostgreSQL");
 
 // ====================================================
 // 🔹 3. Health-check
 // ====================================================
 app.get('/health', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT 1 AS ok');
-    res.json({ ok: true, db: rows[0].ok === 1 });
+    const result = await pool.query('SELECT NOW()');
+    res.json({ ok: true, db_time: result.rows[0].now });
   } catch (e) {
     console.error('[HEALTH ERROR]', e.message);
     res.status(500).json({ ok: false, error: e.message });
@@ -69,7 +73,7 @@ app.get('/', (req, res) => {
 });
 
 // ====================================================
-// 🔹 5. Portfolio Snapshots (Covalent + CoinGecko)
+// 🔹 5. Portfolio Snapshots
 // ====================================================
 
 // POST /api/portfolio/upsert
@@ -81,8 +85,9 @@ app.post('/api/portfolio/upsert', async (req, res) => {
     const sql = `
       INSERT INTO portfolio_snapshots
         (wallet, total_value_usd, total_debt_usd, health_factor, avg_apy, pnl_percent, raw_json)
-      VALUES (?,?,?,?,?,?,?)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
     `;
+
     const params = [
       wallet.toLowerCase(),
       Number(total_value_usd || 0),
@@ -107,30 +112,19 @@ app.get('/api/portfolio/latest', async (req, res) => {
     const wallet = (req.query.wallet || '').toLowerCase();
     if (!isAddress(wallet)) return res.status(400).json({ ok: false, error: 'Invalid wallet' });
 
-    const [rows] = await pool.query(
-      `SELECT * FROM portfolio_snapshots
-       WHERE wallet = ?
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [wallet]
-    );
+    const sql = `
+      SELECT * FROM portfolio_snapshots
+      WHERE wallet = $1
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
 
-    res.json({ ok: true, data: rows[0] || null });
+    const result = await pool.query(sql, [wallet]);
+    res.json({ ok: true, data: result.rows[0] || null });
   } catch (e) {
     console.error('[LATEST ERROR]', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
-});
-
-// ====================================================
-// 🔹 6. Старый DeBank Endpoint (отключен, чтобы не ломался билд)
-// ====================================================
-app.get('/defi/:address', async (req, res) => {
-  res.json({
-    ok: false,
-    disabled: true,
-    message: 'DeBank integration disabled in Syntra Core v1',
-  });
 });
 
 // ====================================================
