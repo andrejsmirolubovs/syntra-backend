@@ -1,6 +1,7 @@
 // ====================================================
 // SYNTRA API — Backend Core (MVP v2)
 // ====================================================
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -24,28 +25,30 @@ const allowedOrigins = [
   "https://syntra-dev.dayincrypto.com"
 ];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error(`CORS blocked: ${origin}`));
-  },
-  methods: ["GET", "POST", "OPTIONS"],
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error(`CORS blocked: ${origin}`));
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    credentials: true,
+  })
+);
 
 // ====================================================
-// 3. Validate DB env
+// 3. Validate DB env + connect
 // ====================================================
 if (!process.env.DATABASE_URL) {
   console.error("❌ ERROR: DATABASE_URL not found");
   process.exit(1);
 }
 
-// DB connection tested on startup
-pool.query("SELECT NOW()")
+pool
+  .query("SELECT NOW()")
   .then(() => console.log("📦 Connected to Neon PostgreSQL"))
-  .catch(err => {
+  .catch((err) => {
     console.error("❌ DB connection error:", err.message);
     process.exit(1);
   });
@@ -78,7 +81,7 @@ app.get("/", (req, res) => {
     version: "2.0.0",
     status: "🟢 online",
     networks: "65 networks supported (Etherscan Multichain)",
-    frontend: "https://syntra-frontend.onrender.com"
+    frontend: "https://syntra-frontend.onrender.com",
   });
 });
 

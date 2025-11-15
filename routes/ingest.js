@@ -1,24 +1,41 @@
-// routes/ingest.js
-import express from 'express';
-import { saveCache, saveSnapshot } from '../services/cache.js';
+import express from "express";
+import { saveCache, saveSnapshot } from "../services/cache.js";
 
 const router = express.Router();
 
-router.post('/ingest/tokens', async (req, res) => {
-  const tokens = req.body.tokens;
-  const wallet = req.body.wallet;
+/**
+ * POST /api/ingest/tokens
+ * Этот маршрут вызывается n8n, когда данные готовы
+ */
+router.post("/ingest/tokens", async (req, res) => {
+  try {
+    const { wallet, total_usd, data } = req.body;
 
-  await saveCache(wallet, tokens);
+    if (!wallet || !total_usd || !data) {
+      return res.status(400).json({
+        ok: false,
+        error: "wallet, total_usd and data are required"
+      });
+    }
 
-  res.json({ ok: true });
-});
+    // Обновляем кэш
+    await saveCache(wallet.toLowerCase(), {
+      total_usd,
+      ...data
+    });
 
-router.post('/ingest/snapshot', async (req, res) => {
-  const { wallet, total_usd } = req.body;
+    // Записываем snapshot (история)
+    await saveSnapshot(wallet.toLowerCase(), total_usd);
 
-  await saveSnapshot(wallet, total_usd);
+    return res.json({ ok: true });
 
-  res.json({ ok: true });
+  } catch (err) {
+    console.error("Ingest route error:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err.message
+    });
+  }
 });
 
 export default router;
