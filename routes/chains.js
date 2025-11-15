@@ -15,15 +15,32 @@ const chains = JSON.parse(fs.readFileSync(chainsPath, "utf8"));
 
 // GET /api/chains
 router.get("/chains", (req, res) => {
-  try {
-    return res.json({
-      ok: true,
-      data: chains
-    });
-  } catch (e) {
-    console.error("Chains route error:", e);
-    return res.status(500).json({ ok: false, error: e.message });
-  }
+  const blocked = [
+    "test",
+    "sepolia",
+    "fuji",
+    "amoy",
+    "curtis",
+    "bokuto",
+    "alpha",
+    "hoodi",
+    "hoody",
+    "bepolia",
+    "apothem",
+    "holesky"
+  ];
+
+  const mainnets = chains.filter(c => {
+    const key = c.chain_key.toLowerCase();
+    return !blocked.some(b => key.includes(b));
+  });
+
+  res.json({
+    ok: true,
+    data: mainnets
+  });
 });
+
+
 
 export default router;
