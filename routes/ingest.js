@@ -4,36 +4,28 @@ import { saveCache } from "../services/cache.js";
 
 const router = express.Router();
 
-/**
- * POST /api/ingest/tokens
- * Приём данных из n8n и сохранение в wallet_cache
- */
 router.post("/ingest/tokens", async (req, res) => {
   try {
     const { wallet, total_usd, chains, tokens, positions } = req.body;
 
-    if (!wallet) {
-      return res.status(400).json({ ok: false, error: "wallet is required" });
+    if (!wallet || total_usd === undefined) {
+      return res.status(400).json({
+        ok: false,
+        error: "wallet and total_usd are required"
+      });
     }
 
-    // unified data structure
     const data = {
       chains: chains || [],
       tokens: tokens || [],
-      positions: positions || [],
+      positions: positions || []
     };
 
-    await saveCache(wallet.toLowerCase(), {
-      total_usd: total_usd || 0,
-      data,
-    });
-
-    console.log("💾 Cache updated for wallet:", wallet);
+    await saveCache(wallet.toLowerCase(), total_usd, data);
 
     return res.json({ ok: true });
-
   } catch (err) {
-    console.error("❌ Ingest error:", err);
+    console.error("INGEST ERROR:", err);
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
