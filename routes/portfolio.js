@@ -31,7 +31,7 @@ router.get("/portfolio/:wallet", async (req, res) => {
         status: "ok",
         source: "cache",
         updated_at: cached.updated_at,
-        total_usd: cached.total_usd,
+        total_usd: Number.total_usd,
         data: cached.data
       });
     }
