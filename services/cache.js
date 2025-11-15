@@ -19,12 +19,12 @@ export async function saveCache(wallet, total_usd, data) {
 
   await pool.query(sql, [
     wallet,
-    Number(total_usd) || 0,
+    Number(total_usd),
     data
   ]);
 }
 
 export function isCacheFresh(updated_at) {
-  const ageMs = Date.now() - new Date(updated_at).getTime();
-  return ageMs < 5 * 60 * 1000; // 5 минут
+  const diff = Date.now() - new Date(updated_at).getTime();
+  return diff < 5 * 60 * 1000;
 }
