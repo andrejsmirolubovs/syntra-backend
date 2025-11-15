@@ -10,6 +10,8 @@ dotenv.config();
 import { pool } from "./db.js";
 import portfolioRoutes from "./routes/portfolio.js";
 import ingestRoutes from "./routes/ingest.js";
+import chainsRoutes from "./routes/chains.js";
+
 
 // ====================================================
 // 1. Init express app
@@ -58,6 +60,7 @@ pool
 // ====================================================
 app.use("/api", portfolioRoutes);
 app.use("/api", ingestRoutes);
+app.use("/api", chainsRoutes);
 
 // ====================================================
 // 5. Health-check
